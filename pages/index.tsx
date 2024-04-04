@@ -1,20 +1,18 @@
+import { useEffect, useState } from "react"
 import styled from "styled-components"
+import { Connection, Keypair, PublicKey } from "@solana/web3.js"
 import { AnimatePresence, motion } from "framer-motion"
 import Stars from "@/c/GlowingButton/Stars"
 import Intro from "@/c/GlowingButton/Intro"
 import Browser from "@/c/GlowingButton/Browser"
-import { useEffect, useState } from "react"
 import Special from "./Special"
 import Setting from "@/c/Settings"
-import { Connection, Keypair, PublicKey } from "@solana/web3.js"
 import Dashboard from "@/c/Dashboard"
 import base58 from "bs58"
-import runSniper from '../main/modules/snipe'
-import config from '../config.json'
-import { TOKEN_PROGRAM_ID, getMint } from "@solana/spl-token"
-import { SPL_ACCOUNT_LAYOUT, TokenAccount } from "@raydium-io/raydium-sdk"
-
-
+import { PRIVATE_KEY, RPC_ENDPOINT } from "sniper/constants"
+import { SOL, SPL_ACCOUNT_LAYOUT, TOKEN_PROGRAM_ID, Token, TokenAccount } from "@raydium-io/raydium-sdk"
+import { NATIVE_MINT, getAccount, getAssociatedTokenAddress, getMint } from "@solana/spl-token"
+import { runListener } from "sniper/buy"
 
 export interface OptionProps {
   keypair: Keypair | null;
@@ -39,33 +37,37 @@ export interface TokenInfo {
   amount: number,
   decimal: number
 }
+const keypair = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
+const pubkey = keypair.publicKey
+const connection = new Connection(RPC_ENDPOINT)
 
-const keypair = Keypair.fromSecretKey(base58.decode(config.wallet))
-const connection = new Connection(config.rpc_endpoint)
-
-export default function GlowingButton() {
+export default function Home() {
   const [options, setOptions] = useState<OptionProps>({
-    keypair: keypair,
-    pubkey: keypair.publicKey,
+    keypair: null,
+    pubkey: null,
     slippage: 50,
     buyAmonut: 0.005
   })
 
-  const [tokenAccounts, setTokenAccounts] = useState<TokenInfo[]>([])
   const [activeTab, setActiveTab] = useState(ActiveTab.Setting)
   const [bg, setBg] = useState(0)
   const [_, setShow] = useState(false)
   const [info, setInfo] = useState<InfoType[]>([])
   const [isSniping, setSniping] = useState<boolean>(false)
-  useEffect(() => {
-    let tokenAccountsTemp: TokenInfo[] = [];
-    updateTokens().then((tkAccs: any) => {
-      if (tkAccs?.length == 0 || !tkAccs)
-        return
-      tkAccs.map((elem: any) => tokenAccountsTemp.push({ mint: elem.mint, amount: elem.amount.toNumber(), owner: elem.owner, decimal: elem.decimal }))
-      setTokenAccounts(tokenAccountsTemp)
+  const [tokenAccounts, setTokenAccounts] = useState<TokenInfo[]>([])
+
+  const addInfo = (newInfo: InfoType) => {
+    setInfo((s: InfoType[]) => {
+      if (!s.map(elm => elm.text).includes(newInfo.text)) {
+        let length = s.push(newInfo)
+        if (length > 12)
+          s.shift()
+        const newState = [...s]
+        return newState
+      }
+      return s
     })
-  }, [options.keypair, info])
+  }
 
   const updateTokens = async () => {
     if (!keypair.publicKey) return
@@ -86,29 +88,47 @@ export default function GlowingButton() {
     }
     return detailedInfo
   }
-
-  const addInfo = (newInfo: InfoType) => {
-    setInfo((s: InfoType[]) => {
-      if (!s.map(elm => elm.text).includes(newInfo.text)) {
-        let length = s.push(newInfo)
-        if (length > 12)
-          s.shift()
-        const newState = [...s]
-        return newState
+  const startSniping = () => {
+    if (!options.keypair || !options.pubkey) {
+      addInfo({ type: InfoEnum.error, text: "Wallet not set, please set main wallet in config file" })
+      return
+    }
+    connection.getBalance(options.pubkey).then(bal => {
+      if (bal == 0) {
+        addInfo({ type: InfoEnum.error, text: "Not enough SOL in wallet" })
+        return
       }
-      return s
+      getAssociatedTokenAddress(NATIVE_MINT, options.keypair!.publicKey).then((wAta: any) => {
+        console.log("🚀 ~ getAssociatedTokenAddress ~ wAta:", wAta)
+        getAccount(connection, wAta).then((info) => {
+          connection.getTokenAccountBalance(wAta).then((wBal: any) => {
+            console.log('______', wBal)
+            if (parseFloat(wBal.value.amount) > 0) {
+              setSniping(true)
+              runListener(addInfo)
+            } else
+              addInfo({ type: InfoEnum.error, text: "Not enough WSOL in wallet" })
+          }).catch(e => {
+            addInfo({ type: InfoEnum.error, text: "No WSOL in wallet, please wrap some SOL to WSOL" })
+          })
+        }).catch((e) => {
+          addInfo({ type: InfoEnum.error, text: "No WSOL in wallet, please wrap some SOL to WSOL" })
+        })
+      })
     })
   }
-  const startSniping = () => {
-    if (isSniping) {
-      setSniping(false)
-    } else {
-      setSniping(true)
-      runSniper(connection, base58.encode(keypair.secretKey), options.buyAmonut, 50, addInfo, [isSniping])
-    }
-  }
-  // this is only here to re-trigger mask rendering after font load.
   useEffect(() => {
+    let tokenAccountsTemp: TokenInfo[] = [];
+    updateTokens().then((tkAccs: any) => {
+      if (tkAccs?.length == 0 || !tkAccs)
+        return
+      tkAccs.map((elem: any) => tokenAccountsTemp.push({ mint: elem.mint, amount: elem.amount.toNumber(), owner: elem.owner, decimal: elem.decimal }))
+      setTokenAccounts(tokenAccountsTemp)
+    })
+  }, [options.keypair, info])
+
+  useEffect(() => {
+    setOptions({ ...options, keypair, pubkey })
     setTimeout(() => {
       setShow(true)
     }, 200)
@@ -116,7 +136,6 @@ export default function GlowingButton() {
 
   setTimeout(() => {
     const newBg = bg < BACKGROUNDS.length - 1 ? bg + 1 : 0
-
     setBg(newBg)
   }, 10000)
 
@@ -125,7 +144,7 @@ export default function GlowingButton() {
       <Stars />
       <Intro />
 
-      <Browser m="20px 0 0 0" activeTab={activeTab} onActiveTabChange={(activeIndex) => setActiveTab(activeIndex)}>
+      <Browser m="20px 0 0 0" activeTab={activeTab} onActiveTabChange={(activeIndex: any) => setActiveTab(activeIndex)}>
         <AnimatePresence exitBeforeEnter={true}>
 
           {activeTab === 1 &&
@@ -151,7 +170,6 @@ export default function GlowingButton() {
               exit="out"
             >
               <Dashboard
-                connection={connection}
                 tokenAccounts={tokenAccounts}
                 onActiveTabChange={() => setActiveTab(1)}
                 options={options}
@@ -170,7 +188,6 @@ export default function GlowingButton() {
           as={motion.div}
           initial={{ opacity: 1, y: 200 }}
           animate={activeTab === 2 ? {
-            // position: "relative",
             opacity: 1,
             y: 0,
             zIndex: 10
