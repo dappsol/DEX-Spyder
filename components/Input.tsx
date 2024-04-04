@@ -15,6 +15,7 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   errorLabel?: string | Function;
   placeholder?: string;
   width: string;
+  noDisable?: boolean
 }
 
 const Wrapper = styled.div<Partial<InputProps>>`
@@ -80,7 +81,10 @@ const Input = (props: InputProps) => {
         buttonheight={47}
       />
       <InnerElement>{props.label}</InnerElement>
-      <InputStyled {...props} />
+      {props.noDisable ?
+        <InputStyled {...props} /> :
+        <InputStyled disabled {...props} />
+      }
     </Wrapper>
   );
 };

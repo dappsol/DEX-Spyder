@@ -1,38 +1,41 @@
 import { useEffect, useState } from "react";
-import { Connection, PublicKey } from "@solana/web3.js";
 import styled from "styled-components"
+import { Connection, PublicKey } from "@solana/web3.js";
 import { InfoType, InfoEnum, OptionProps, TokenInfo } from "pages";
-import PoolKeys from '../main/modules/getPool'
-import { sellToken } from "main/amm/swapOnlyAmm";
 import NormalButton from "pages/Normal";
-// import { sell } from "main/modules/snipe";
-// import { option } from "@raydium-io/raydium-sdk";
+import { RPC_ENDPOINT } from "sniper/constants";
+import { customSell } from "sniper/buy";
+import { wrapSol } from "sniper/wsol";
+import { Section } from "./Settings";
+import Input from "./Input";
+import { NATIVE_MINT, getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
 
 
 interface Props {
-  connection: Connection,
   options: OptionProps,
   setOptions: any,
-  tokenAccounts: TokenInfo[],
-  // setSniping: any,
   onActiveTabChange: any,
   info: InfoType[],
   addInfo: any,
   isSniping: boolean,
+  tokenAccounts: TokenInfo[]
 }
 interface SelectedToken {
   mint: PublicKey,
   amount: number,
   decimal: number,
 }
+const connection = new Connection(RPC_ENDPOINT)
 
 export default function Dashboard(props: Props) {
-  const { options, connection, setOptions, onActiveTabChange, info, addInfo, isSniping, tokenAccounts } = props
+  const { options, setOptions, onActiveTabChange, tokenAccounts, info, addInfo, isSniping } = props
   const [selectedToken, setSelectedToken] = useState<PublicKey | null>(null)
   const [tokenInfo, setTokenInfo] = useState<SelectedToken | null>(null)
   const [balance, setBalance] = useState<number>(0)
+  const [wSolBal, setWsolBal] = useState<number>(0)
+  const [check, setCheck] = useState<number>(0)
+  const [claimAmount, setClaimAmount] = useState<string>("")
 
-  const pubkey = options.pubkey ? options.pubkey.toBase58() : "Wallet not defined"
   const onChangeToken = (e: any) => {
     setSelectedToken(new PublicKey(e.target.value))
     setTokenInfo(() => {
@@ -40,36 +43,34 @@ export default function Dashboard(props: Props) {
       return newAccount[0]
     })
   }
-  const sell = async (dividend: number) => {
-    if (!tokenInfo)
+  const wrap = async () => {
+    const num = parseFloat(claimAmount)
+    if (isNaN(num) || !options.keypair) {
+      console.log("Invalid params")
+      addInfo({ type: "error", text: "Invlid params" })
       return
-    try {
-      const poolkeys = await PoolKeys.fetchPoolKeyInfo(tokenInfo.mint, new PublicKey('So11111111111111111111111111111111111111112'))
-      // sell(poolkeys, tokenInfo.amount / tokenInfo.decimal, 0, addInfo)
-      if (!poolkeys || !options.keypair) {
-        addInfo({ type: InfoEnum.error, text: "Failed to get poolkeys, pool may not exist" })
-        return
-      }
-      sellToken(
-        poolkeys.baseMint.toBase58(),
-        poolkeys.id.toBase58(),
-        poolkeys.baseDecimals,
-        tokenInfo.amount / 10 ** tokenInfo.decimal, 100,
-        options.keypair,
-        addInfo
-      )
-
-    } catch (error) {
-      addInfo({ type: InfoEnum.error, text: "Error in selling token" })
     }
+    await wrapSol(connection, options.keypair, num, addInfo)
   }
   useEffect(() => {
+    setTimeout(() => {
+      setCheck(check + 1)
+    }, 2000);
     if (!options.pubkey) return
     connection.getBalance(options.pubkey).then(bal => setBalance(Math.round(bal / 10 ** 6) / 1000))
-  }, [options.keypair, info])
-  const onSellQuarter = () => sell(4)
-  const onSellHalf = () => sell(2)
-  const onSellAll = () => sell(1)
+    getAssociatedTokenAddress(NATIVE_MINT, options.keypair!.publicKey).then((wAta: any) => {
+      getAccount(connection, wAta).then(() => {
+        connection.getTokenAccountBalance(wAta).then((bal: any) => {
+          setWsolBal(Math.round(Number(bal.value.amount) / 10 ** 6) / 1000)
+        })
+      }).catch((e) => {
+        addInfo({type: "error", text:"No WSOL in wallet, please wrap some SOL to WSOL"})
+      })
+    })
+  }, [check])
+  const onSellQuarter = () => customSell(selectedToken!, tokenInfo!.amount / 4)
+  const onSellHalf = () => customSell(selectedToken!, tokenInfo!.amount / 2)
+  const onSellAll = () => customSell(selectedToken!, tokenInfo!.amount)
 
   if (!options.keypair) {
     setTimeout(() => {
@@ -116,12 +117,14 @@ export default function Dashboard(props: Props) {
       </Cmd>
       <div>
         <TokenNum >Total Tokens: {tokenAccounts.length}</TokenNum>
-        <TokenNum>Balance: {balance}SOL</TokenNum>
+        <TokenNum><div>Balance:</div> {balance}SOL / {wSolBal}WSOL</TokenNum>
         <TokensPanel>
           <StyledSelect value={selectedToken ? selectedToken.toBase58() : ""} onChange={onChangeToken}>
             <option value="" style={{ display: "none" }}>Select token to sell</option>
-            {tokenAccounts.map((account, i) =>
-              <option key={i} value={account.mint.toBase58()}>{account.mint.toBase58()}</option>
+            {tokenAccounts.map((account, i) => {
+              if (account.mint.toBase58() != "So11111111111111111111111111111111111111112")
+                return <option key={i} value={account.mint.toBase58()}>{account.mint.toBase58()}</option>
+            }
             )}
           </StyledSelect>
           {tokenInfo &&
@@ -136,8 +139,13 @@ export default function Dashboard(props: Props) {
               </AllBox>
             </>
           }
+          <Section>
+            <Input value={claimAmount} noDisable={true} onChange={(e: any) => setClaimAmount(e.target.value)} type="text" label="$" width="110px" />
+            <NormalButton onClick={wrap}>Wrap SOL</NormalButton>
+          </Section>
+          <div style={{ width: "100%", textAlign: "center", marginTop: 10 }}>
+          </div>
         </TokensPanel>
-
       </div>
     </Wrapper>
   )
@@ -213,7 +221,7 @@ const TokenNum = styled.div`
   padding: 5px;
   width: 160px;
   margin-left: 25px;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
   text-align: center;
   font-size: 13px;
 `
@@ -236,7 +244,7 @@ const SellButton = styled.div`
 `
 
 const Row = styled.div`
-  margin: 25px 0;
+  margin: 5px 0;
   display: flex;
 `
 

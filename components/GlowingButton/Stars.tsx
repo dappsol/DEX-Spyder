@@ -21,7 +21,7 @@ const Gradient = styled.div`
   top: 5vw;
 `
 
-export default function Stars() {
+const Stars: React.FC = () => {
   return (
     <Wrapper>
       <Gradient as={motion.div} 
@@ -31,3 +31,4 @@ export default function Stars() {
     </Wrapper>
   )
 }
+export default Stars
